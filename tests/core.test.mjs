@@ -1,14 +1,89 @@
-import {test} from 'node:test';
-import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
-import {createIndex,search} from '../core/retrieval.ts';
-import {project,nextScan} from '../core/signal.ts';
-import {pack,unpack,packedBytes,evaluate,infer} from '../core/precision.ts';
-const model=JSON.parse(readFileSync(new URL('../data/model.json',import.meta.url)));
-const points=JSON.parse(readFileSync(new URL('../data/test-points.json',import.meta.url)));
-test('retrieval ranks specific terms and preserves source lines',()=>{const index=createIndex([{id:'a',title:'Alpha',text:'Memory and inference.\nPacked weights save bytes.'},{id:'b',title:'Beta',text:'Baggage scans detect missing handoffs.'}]);const hit=search(index,'packed weights')[0];assert.equal(hit.documentId,'a');assert.equal(hit.startLine,1);assert.equal(hit.endLine,2);assert.ok(hit.score>0);assert.deepEqual(search(index,'unicorn'),[]);assert.deepEqual(search(index,'the and'),[]);});
-test('retrieval handles unicode, CRLF, duplicate ids and stable ties',()=>{assert.throws(()=>createIndex([{id:'a',title:'a',text:'hi'},{id:'a',title:'b',text:'bye'}]));const index=createIndex([{id:'z',title:'z',text:'Café retrieval\r\nsecond line'},{id:'a',title:'a',text:'Café retrieval\r\nsecond line'}]);assert.equal(search(index,'CAFÉ')[0].documentId,'a');assert.equal(search(index,'second')[0].endLine,2);});
-test('signal detects a skipped station, accepts late recovery and deduplicates',()=>{let events=[nextScan([],0,'first')];events.push(nextScan(events,2,'third'));assert.deepEqual(project(events).missing,[1]);events.push({...events[1]});assert.equal(project(events).duplicates,1);events.push(nextScan(events,1,'late'));assert.equal(project(events).last,2);assert.equal(project(events).status,'In transit');events.push(nextScan(events,4));assert.equal(project(events).status,'Gap detected');events.push(nextScan(events,3));assert.equal(project(events).status,'Arrived');});
-test('signal projection is independent of delivery order and bag isolation',()=>{const events=[0,1,2,3,4].map((s)=>nextScan([],s,`s${s}`));assert.equal(project(events.reverse()).status,'Arrived');assert.equal(project(events,'OTHER').last,-1);assert.throws(()=>project([{id:'bad',bag:'KM-042',station:5,timestamp:0}]));});
-for(const bits of [32,8,4])test(`${bits}-bit model round trip is finite, correctly sized and accurate`,()=>{const bytes=pack(model,bits);assert.equal(bytes.length,packedBytes(model,bits));const restored=unpack(bytes);assert.deepEqual(restored.layers.map(l=>[l.input,l.output]),[[2,16],[16,16],[16,2]]);assert.ok(evaluate(restored,points)>.95);for(const p of [[0,0],[2,2],[-2,-2]]){const probs=infer(restored,p);assert.ok(probs.every(Number.isFinite));assert.ok(Math.abs(probs.reduce((a,b)=>a+b)-1)<1e-10);}});
-test('packed decoder rejects malformed and truncated buffers',()=>{assert.throws(()=>unpack(new Uint8Array(3)));const bytes=pack(model,4);assert.throws(()=>unpack(bytes.slice(0,-1)));const extra=new Uint8Array(bytes.length+1);extra.set(bytes);assert.throws(()=>unpack(extra));});
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createIndex, search } from "../core/retrieval.ts";
+import { project, nextScan } from "../core/signal.ts";
+import { pack, unpack, packedBytes, evaluate, infer } from "../core/precision.ts";
+const model = JSON.parse(readFileSync(new URL("../data/model.json", import.meta.url)));
+const points = JSON.parse(readFileSync(new URL("../data/test-points.json", import.meta.url)));
+test("retrieval ranks specific terms and preserves source lines", () => {
+  const index = createIndex([
+    { id: "a", title: "Alpha", text: "Memory and inference.\nPacked weights save bytes." },
+    { id: "b", title: "Beta", text: "Baggage scans detect missing handoffs." },
+  ]);
+  const hit = search(index, "packed weights")[0];
+  assert.equal(hit.documentId, "a");
+  assert.equal(hit.startLine, 1);
+  assert.equal(hit.endLine, 2);
+  assert.ok(hit.score > 0);
+  assert.deepEqual(search(index, "unicorn"), []);
+  assert.deepEqual(search(index, "the and"), []);
+});
+test("retrieval handles unicode, CRLF, duplicate ids and stable ties", () => {
+  assert.throws(() =>
+    createIndex([
+      { id: "a", title: "a", text: "hi" },
+      { id: "a", title: "b", text: "bye" },
+    ]),
+  );
+  const index = createIndex([
+    { id: "z", title: "z", text: "Café retrieval\r\nsecond line" },
+    { id: "a", title: "a", text: "Café retrieval\r\nsecond line" },
+  ]);
+  assert.equal(search(index, "CAFÉ")[0].documentId, "a");
+  assert.equal(search(index, "second")[0].endLine, 2);
+});
+test("signal detects a skipped station, accepts late recovery and deduplicates", () => {
+  let events = [nextScan([], 0, "first")];
+  events.push(nextScan(events, 2, "third"));
+  assert.deepEqual(project(events).missing, [1]);
+  events.push({ ...events[1] });
+  assert.equal(project(events).duplicates, 1);
+  events.push(nextScan(events, 1, "late"));
+  assert.equal(project(events).last, 2);
+  assert.equal(project(events).status, "In transit");
+  events.push(nextScan(events, 4));
+  assert.equal(project(events).status, "Gap detected");
+  events.push(nextScan(events, 3));
+  assert.equal(project(events).status, "Arrived");
+});
+test("signal projection is independent of delivery order and bag isolation", () => {
+  const events = [0, 1, 2, 3, 4].map((s) => nextScan([], s, `s${s}`));
+  assert.equal(project(events.reverse()).status, "Arrived");
+  assert.equal(project(events, "OTHER").last, -1);
+  assert.throws(() => project([{ id: "bad", bag: "KM-042", station: 5, timestamp: 0 }]));
+});
+for (const bits of [32, 8, 4])
+  test(`${bits}-bit model round trip is finite, correctly sized and accurate`, () => {
+    const bytes = pack(model, bits);
+    assert.equal(bytes.length, packedBytes(model, bits));
+    const restored = unpack(bytes);
+    assert.deepEqual(
+      restored.layers.map((l) => [l.input, l.output]),
+      [
+        [2, 16],
+        [16, 16],
+        [16, 2],
+      ],
+    );
+    assert.ok(evaluate(restored, points) > 0.95);
+    for (const p of [
+      [0, 0],
+      [2, 2],
+      [-2, -2],
+    ]) {
+      const probs = infer(restored, p);
+      assert.ok(probs.every(Number.isFinite));
+      assert.ok(Math.abs(probs.reduce((a, b) => a + b) - 1) < 1e-10);
+    }
+  });
+test("packed decoder rejects malformed and truncated buffers", () => {
+  assert.throws(() => unpack(new Uint8Array(3)));
+  const bytes = pack(model, 4);
+  assert.throws(() => unpack(bytes.slice(0, -1)));
+  const extra = new Uint8Array(bytes.length + 1);
+  extra.set(bytes);
+  assert.throws(() => unpack(extra));
+});
+test('odd int4 arrays preserve signed values and padding',()=>{const small={layers:[{input:1,output:3,weights:[-1,0,1],bias:[0,0,0]}]};const bytes=pack(small,4);assert.equal(bytes.length,34);const decoded=unpack(bytes);assert.ok(decoded.layers[0].weights[0]<-.99);assert.equal(decoded.layers[0].weights[1],0);assert.ok(decoded.layers[0].weights[2]>.99);});
+test('decoder rejects non-finite parameters and empty models',()=>{const bytes=pack(model,32);new DataView(bytes.buffer).setFloat32(20,NaN,true);assert.throws(()=>unpack(bytes),/Non-finite/);assert.throws(()=>unpack(new Uint8Array([75,77,76,49,4,0,0,0])),/Empty/);});
